@@ -1,0 +1,56 @@
+name: image
+
+# Constroi a imagem do servidor da cena e publica-a em ghcr.io/noxied/room:latest
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "room/**"
+      - "server/**"
+      - "Dockerfile"
+      - "requirements.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: image
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Teste rapido (gera as duas cenas)
+        run: |
+          pip install -r requirements.txt
+          python -m room --room sala --out /tmp/sala.svg
+          python -m room --room secretaria --mode fallback --out /tmp/secretaria.svg
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ghcr.io/noxied/room:latest
+            ghcr.io/noxied/room:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

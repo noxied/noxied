@@ -1,0 +1,73 @@
+name: update
+
+# Gera contrib.json + fallback.svg e publica-os no ramo orfao "output" (um unico commit, reescrito).
+# O Worker serve o fallback.svg quando o servidor do homelab nao responde; o servidor le o contrib.json.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-output
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Contribuicoes (GraphQL)
+        env:
+          # CONTRIB_TOKEN (opcional): PAT so de leitura, se o GITHUB_TOKEN nao vir as contribuicoes privadas
+          GH_TOKEN: ${{ secrets.CONTRIB_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p out
+          gh api graphql -f query='{user(login:"noxied"){contributionsCollection{contributionCalendar{totalContributions weeks{contributionDays{date contributionCount}}}}}}' > new.json || true
+          git fetch --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" output:refs/remotes/origin/output 2>/dev/null \
+            && git show origin/output:contrib.json > prev.json 2>/dev/null || true
+          python - <<'PY'
+          import json, shutil
+          from pathlib import Path
+          from room import EMBEDDED, parse_contrib
+          for src in ("new.json", "prev.json", str(EMBEDDED)):
+              try:
+                  days = parse_contrib(json.loads(Path(src).read_text(encoding="utf-8")))
+              except Exception as e:
+                  print(f"{src}: ignorado ({e.__class__.__name__})")
+                  continue
+              shutil.copy(src, "out/contrib.json")
+              print(f"contrib.json <- {src}: {len(days)} dias, ultimo {days[-1][0]}")
+              break
+          PY
+
+      - name: fallback.svg (hora de Lisboa, so o ponteiro das horas)
+        env:
+          TZ: Europe/Lisbon
+        run: python -m room --data out/contrib.json --out out/fallback.svg --mode fallback
+
+      - name: Publicar no ramo output (force-push, 1 commit)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        working-directory: out
+        run: |
+          git init -q -b output
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add contrib.json fallback.svg
+          git commit -q -m "output $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:output
