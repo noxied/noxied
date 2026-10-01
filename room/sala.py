@@ -1,7 +1,7 @@
 """Sala de servidores, versao final (r9): relogio de luz com a hora real em Portugal.
 
 Copia de tools/final_sala.py para o pacote room (imports relativos; acrescentado mode='fallback':
-o ponteiro unico de 24 h e posto com um avanco de FALLBACK_LEAD minutos, para compensar a idade media da imagem).
+relogio de 12 h so com o ponteiro das horas, posto com um avanco de FALLBACK_LEAD minutos, para compensar a idade media da imagem).
 
 Evolucao de tools/clock_sala.py + tools/r6_01_sala-servidores.py (copiados, nao importados).
 """
@@ -38,7 +38,7 @@ GAP = 0.04
 WGAP = 0.20                 # folga extra de cada lado das estantes de arame (a janela respira)
 WIN = (3.80, 4.95, 1.60, 2.48)      # janela alta: x0, x1, y0, y1 (por cima das estantes de arame baixas)
 DOOR = (8.86, 9.58, 1.98)           # porta na parede do fundo: x0, x1, altura
-CLOCK = (9.2, 2.27, .145)           # relogio de 24 h por cima da porta: x, y, raio
+CLOCK = (9.15, 2.265, .186)          # relogio de 12 h por cima da porta: x, y, raio
 NP = 3                              # vidros da janela
 WD = 0.28                           # espessura da parede na janela
 SUN = (0.8, -0.9, -1.0)           # direcao da luz que entra
@@ -1283,70 +1283,88 @@ def sun_times(day):
 
 
 def clock_ang(h):
-    """angulo do ponteiro (graus, sentido horario a partir do topo) num mostrador de 24 h com o meio-dia em cima."""
-    return (h - 12) / 24 * 360
+    """angulo (graus, sentido horario a partir do topo) do ponteiro das horas num mostrador normal de 12 h."""
+    return (h % 12) / 12 * 360
+
+
+def _lum(c):
+    c = c.lstrip("#")
+    r, g, b = (int(c[i:i + 2], 16) / 255 for i in (0, 2, 4))
+    return .2126 * r + .7152 * g + .0722 * b
 
 
 def wall_clock(t, st, eg, x, y, z, r=.16):
-    """relogio de 24 h na parede: meio-dia em cima, meia-noite em baixo; o arco claro vai do nascer ao por do sol
-    desse dia (o resto e noite). Um so ponteiro, uma volta por dia, como o sol. Sem ponteiro de minutos (num
-    mostrador de 24 h criava uma leitura falsa de 12 h).
-    Ao vivo: o ponteiro anda a velocidade real (CSS, 86400 s). No timelapse: uma volta por ciclo (CSS, mesma
-    duracao da luz), e sem animacao fica na hora estatica, tal como a luz."""
+    """relogio de parede analogico normal de 12 h (12 marcas, 3/6/9/12 mais fortes, sem numeros).
+    Ao vivo (live): ponteiros das horas, dos minutos e dos segundos (fino, cor de acento), na hora exata de
+    geracao e a andar a velocidade real (CSS: 43200 s / 3600 s / 60 s em steps). O transform estatico de cada
+    ponteiro ja e a hora de geracao (a animacao e relativa), por isso sem animacao le-se a hora certa.
+    Fallback (imagem da Action, vista com atraso): so o ponteiro das horas, adiantado (eg["clock_dt"]).
+    Timelapse: so o ponteiro das horas, duas voltas por ciclo, em fase com a luz."""
     m = affine(x, y, z)
     dt = (eg.get("clock_dt") or eg["dt"]) if eg else datetime(2026, 9, 30, 12, 0)
     tl = eg["tl"] if eg else False
+    full = bool(eg) and not tl and not eg.get("clock_fb")         # live: minutos e segundos
     day = st.get("day", 0)
-    rise, sett = sun_times(dt.date())
-    face_d = lerpc(t["label"], t["wall1"], .15 + .4 * (1 - day))             # dia: creme, apagado de noite
-    face_n = lerpc("#1c2740", t["wall1"], .25)                                # noite: azul-noite
-    ink_d, ink_n = lerpc("#1b1d22", face_d, .1), lerpc("#c9d3ea", face_n, .25 + .25 * (1 - day))
+    face = lerpc(t["label"], t["wall1"], .12 + .38 * (1 - day))   # creme de dia, apagado de noite
+    ink = "#1b1d22" if _lum(face) > .42 else "#d9deea"
+    ink = lerpc(ink, face, .08)
     rim = t["frame"]
+    rim_hi = lerpc(rim, "#ffffff", .18 + .12 * day)
+    acc = "#b04a32"                                                # vermelho-tijolo discreto
 
     def pt(a, rr):
         a = math.radians(a)
         return rr * math.sin(a), -rr * math.cos(a)
-    a0, a1 = clock_ang(rise), clock_ang(sett)
-    p0, p1 = pt(a0, r), pt(a1, r)
-    big = 1 if (a1 - a0) % 360 > 180 else 0
     o = [f'<g transform="{m}">',
-         f'<circle cx=".018" cy=".03" r="{r * 1.1:.3f}" fill="#000" opacity="{.22 + .1 * day:.2f}"/>',
+         f'<circle cx="{r * .1:.4f}" cy="{r * .16:.4f}" r="{r * 1.12:.3f}" fill="#000" opacity="{.16 + .1 * day:.2f}"/>',
+         f'<circle cx="{r * .05:.4f}" cy="{r * .08:.4f}" r="{r * 1.1:.3f}" fill="#000" opacity="{.12 + .08 * day:.2f}"/>',
          f'<circle r="{r * 1.1:.3f}" fill="{rim}"/>',
-         f'<circle r="{r:.3f}" fill="{face_n}"/>',
-         f'<path d="M0 0 L{p0[0]:.4f} {p0[1]:.4f} A{r:.3f} {r:.3f} 0 {big} 1 {p1[0]:.4f} {p1[1]:.4f}Z" fill="{face_d}"/>']
-    # 24 riscos: fortes em 0/6/12/18
-    for k in range(24):
-        a_ = clock_ang(k)
-        strong = k % 6 == 0
-        dayk = (k - rise) % 24 < (sett - rise) % 24
-        ink = ink_d if dayk else ink_n
-        r0, r1 = r * (.66 if strong else .8), r * .92
+         f'<circle r="{r * 1.06:.3f}" fill="none" stroke="{rim_hi}" stroke-width="{r * .035:.4f}" opacity=".7"/>',
+         f'<circle r="{r:.3f}" fill="{face}"/>',
+         # sombra do aro no mostrador (vidro fundo): mais escuro em cima a esquerda
+         f'<circle cx="{r * .03:.4f}" cy="{r * .05:.4f}" r="{r * .97:.3f}" fill="none" stroke="#000" '
+         f'stroke-width="{r * .06:.4f}" opacity=".12"/>']
+    # 12 marcas: 12/3/6/9 mais fortes
+    for k in range(12):
+        a_ = k * 30
+        strong = k % 3 == 0
+        r0, r1 = r * (.7 if strong else .78), r * .9
         q0, q1 = pt(a_, r0), pt(a_, r1)
         o.append(f'<line x1="{q0[0]:.4f}" y1="{q0[1]:.4f}" x2="{q1[0]:.4f}" y2="{q1[1]:.4f}" stroke="{ink}" '
-                 f'stroke-width="{r * (.085 if strong else .035):.4f}" stroke-linecap="butt"/>')
-    # sol ao meio-dia (em cima), lua a meia-noite (em baixo)
-    o.append(f'<circle cx="0" cy="{-r * .42:.4f}" r="{r * .11:.4f}" fill="#e39a2e"/>')
-    mc = lerpc("#e8ecf6", face_n, .2)
-    o.append(f'<path d="M{r * .06:.4f} {r * .31:.4f} a{r * .11:.4f} {r * .11:.4f} 0 1 0 0 {r * .22:.4f} '
-             f'a{r * .085:.4f} {r * .085:.4f} 0 1 1 0 {-r * .22:.4f}Z" fill="{mc}"/>')
-    # vidro: um brilho discreto
-    o.append(f'<path d="M{-r * .78:.4f} {-r * .3:.4f} A{r * .84:.4f} {r * .84:.4f} 0 0 1 {-r * .1:.4f} {-r * .83:.4f}" fill="none" '
-             f'stroke="#fff" stroke-width="{r * .05:.4f}" opacity="{.08 + .1 * day:.2f}" stroke-linecap="round"/>')
+                 f'stroke-width="{r * (.085 if strong else .04):.4f}" stroke-linecap="butt"/>')
     hours = dt.hour + dt.minute / 60 + dt.second / 3600
     ah = clock_ang(hours)
-    hand = (f'<circle r="{r:.3f}" fill="none"/>'            # caixa simetrica: o centro de rotacao (fill-box) e o do mostrador
-            f'<path d="M{-r * .06:.4f} {r * .18:.4f} L{-r * .028:.4f} {-r * .5:.4f} L0 {-r * .86:.4f} L{r * .028:.4f} {-r * .5:.4f} L{r * .06:.4f} {r * .18:.4f}Z" '
-            f'fill="#d8432f"/>'
-            f'<circle r="{r * .1:.4f}" fill="#d8432f"/><circle r="{r * .04:.4f}" fill="{rim}"/>')
-    o.append(f'<g class="{"chh" if tl else "chl"}" transform="rotate({ah:.2f})">{hand}</g>')
-    o.append('</g>')
+    am = (dt.minute + dt.second / 60) * 6
+    asec = dt.second * 6
+    box = f'<circle r="{r:.3f}" fill="none"/>'            # caixa simetrica: o centro de rotacao (fill-box) e o do mostrador
+    hh = (box + f'<path d="M{-r * .065:.4f} {r * .16:.4f} L{-r * .045:.4f} {-r * .4:.4f} L0 {-r * .54:.4f} '
+          f'L{r * .045:.4f} {-r * .4:.4f} L{r * .065:.4f} {r * .16:.4f}Z" fill="{ink}"/>')
+    mh = (box + f'<path d="M{-r * .045:.4f} {r * .18:.4f} L{-r * .03:.4f} {-r * .66:.4f} L0 {-r * .84:.4f} '
+          f'L{r * .03:.4f} {-r * .66:.4f} L{r * .045:.4f} {r * .18:.4f}Z" fill="{ink}"/>')
+    sh = (box + f'<path d="M0 {r * .24:.4f} L0 {-r * .88:.4f}" stroke="{acc}" stroke-width="{r * .028:.4f}" stroke-linecap="round"/>'
+          f'<circle cy="{r * .2:.4f}" r="{r * .055:.4f}" fill="{acc}"/>')
     if tl:
-        a_start = clock_ang(0)
-        css = (f"@keyframes chh{{from{{transform:rotate({a_start:.1f}deg)}}to{{transform:rotate({a_start + 360:.1f}deg)}}}}"
+        o.append(f'<g class="chh" transform="rotate({ah:.2f})">{hh}</g>')
+        css = (f"@keyframes chh{{from{{transform:rotate(0deg)}}to{{transform:rotate(720deg)}}}}"
                f".chh{{animation:chh {TL_SECS:.0f}s linear infinite;transform-box:fill-box;transform-origin:50% 50%}}")
     else:
-        css = (f"@keyframes chl{{from{{transform:rotate({ah:.2f}deg)}}to{{transform:rotate({ah + 360:.2f}deg)}}}}"
-               f".chl{{animation:chl 86400s linear infinite;transform-box:fill-box;transform-origin:50% 50%}}")
+        o.append(f'<g transform="rotate({ah:.2f})"><g class="ckh">{hh}</g></g>')
+        css = ("@keyframes ckr{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}"
+               ".ckh,.ckm,.cks{transform-box:fill-box;transform-origin:50% 50%}"
+               ".ckh{animation:ckr 43200s linear infinite}")
+        if full:
+            o.append(f'<g transform="rotate({am:.2f})"><g class="ckm">{mh}</g></g>')
+            o.append(f'<g transform="rotate({asec:.2f})"><g class="cks">{sh}</g></g>')
+            css += ".ckm{animation:ckr 3600s linear infinite}.cks{animation:ckr 60s steps(60) infinite}"
+    o.append(f'<circle r="{r * .075:.4f}" fill="{ink}"/>')
+    if full:
+        o.append(f'<circle r="{r * .035:.4f}" fill="{acc}"/>')
+    # vidro: reflexo subtil (mais vivo de dia)
+    o.append(f'<path d="M{-r * .8:.4f} {-r * .22:.4f} A{r * .84:.4f} {r * .84:.4f} 0 0 1 {-r * .2:.4f} {-r * .82:.4f}" fill="none" '
+             f'stroke="#fff" stroke-width="{r * .07:.4f}" opacity="{.1 + .14 * day:.2f}" stroke-linecap="round"/>')
+    o.append(f'<path d="M{-r * .62:.4f} {-r * .62:.4f} A{r * .9:.4f} {r * .9:.4f} 0 0 1 {r * .55:.4f} {-r * .7:.4f} '
+             f'A{r * 1.3:.4f} {r * 1.3:.4f} 0 0 0 {-r * .62:.4f} {-r * .62:.4f}Z" fill="#fff" opacity="{.04 + .05 * day:.2f}"/>')
+    o.append('</g>')
     return "".join(o), css
 
 
@@ -1816,13 +1834,14 @@ FALLBACK_LEAD = 10     # minutos: a imagem de fallback tem entre 0 e ~25 min qua
 
 def render_full(days, local_dt, idp="", show=None, mode="live", lead_min=FALLBACK_LEAD):
     """mode="live": relogio exatamente na hora dada. mode="fallback": imagem que vai ser vista com atraso
-    (Action + caches): o unico ponteiro (24 h, sem minutos nem segundos) avanca lead_min minutos."""
+    (Action + caches): so o ponteiro das horas (12 h, sem minutos nem segundos), adiantado lead_min minutos."""
     el, az = solar(to_utc(local_dt))
     st = state(el, az)
     eg = egg_cfg(days, local_dt)
     eg["show"] = show
     if mode == "fallback":
         eg["clock_dt"] = local_dt + timedelta(minutes=lead_min)
+        eg["clock_fb"] = True
     return build(days, st, idp, eg=eg), st
 
 
@@ -1850,7 +1869,7 @@ def _style(svg):
 def timelapse(days, day, secs=TL_SECS, n=48, static_at=(17, 30)):
     """Loop de 24 h: 6 camadas de paleta completas (noite, azul da manha, violeta do anoitecer, dia,
     dourado, rosado), cada uma com a sua luz de janela, empilhadas com opacidade animada; por cima,
-    um feixe de sol por meia hora em crossfade. O relogio de 24 h e o painel do portatil andam com o loop
+    um feixe de sol por meia hora em crossfade. O ponteiro das horas do relogio e o painel do portatil andam com o loop
     (uma volta / um dia por ciclo). Estatico (sem CSS) = static_at."""
     import re
     samples = [day + timedelta(minutes=30 * i) for i in range(n + 1)]

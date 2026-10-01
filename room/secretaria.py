@@ -664,7 +664,7 @@ def build(data, rig, st, sts=None, idp=""):
 
     # ------------------------------------------------------------------ parede da secretaria
     # relogio de parede: hora real
-    a(clock_svg(rig, st.get("clock_dt") or ldt, ev, css))
+    a(clock_svg(rig, st.get("clock_dt") or ldt, ev, css, fb=st.get("clock_fb", False)))
 
     # calendario de parede: mes corrente, dias ativos, hoje com aro
     cx0, cy0 = 316, 34
@@ -1143,7 +1143,7 @@ def build(data, rig, st, sts=None, idp=""):
 
     a(rig.g("cat", cat_rim(206, 124)))
     # relogio: lume e luz do monitor
-    a(clock_night(rig, st.get("clock_dt") or ldt))
+    a(clock_night(rig, st.get("clock_dt") or ldt, fb=st.get("clock_fb", False)))
     # luz de recorte na cadeira: monitor (topo, frio), candeeiro (direita, quente), janela (esquerda, quente/frio)
     a(rig.g("rimC", f'<path d="{CH_TOP}" stroke="#a9c2ff" stroke-width="1.1" fill="none" opacity="0.75" stroke-linecap="round"/>'))
     a(rig.g("lamp", f'<path d="{CH_RIGHT}" stroke="#ffb56a" stroke-width="1.3" fill="none" opacity="0.85" stroke-linecap="round"/>'
@@ -1435,31 +1435,14 @@ def chair_svg():
 
 
 # ================================================================== relogio de parede
-# r9b: relogio de 24 h com UM ponteiro (uma volta por dia; meia-noite em baixo, meio-dia em cima) e um aro
-# dia/noite com o nascer e o por do sol reais do dia. Porque: a imagem ao vivo so e regenerada de 15 em 15 min
-# e o Camo serve-a com atraso; um ponteiro de minutos estaria sempre errado. Num mostrador de 24 h, 30 min de
-# atraso sao 7.5 graus (invisivel), e o timelapse da UMA volta por loop, em fase com a luz.
-CCX, CCY, CR = 300, 38, 16.0
-
-
-def day_arc(ldt):
-    """(nascer, por) do sol em horas locais para o dia de ldt (elevacao 0 com refracao)."""
-    d0 = ldt.replace(hour=0, minute=0, second=0, microsecond=0)
-    prev, rise, sett = None, 6.5, 19.5
-    for k in range(0, 24 * 6 + 1):
-        t = d0 + timedelta(minutes=10 * k)
-        el = solar(to_utc(t))[0]
-        if prev is not None:
-            if prev < 0 <= el:
-                rise = (k - 1 + (-prev) / (el - prev)) / 6
-            if prev >= 0 > el:
-                sett = (k - 1 + prev / (prev - el)) / 6
-        prev = el
-    return rise, sett
-
-
-def ang24(h):
-    return 180 + 15 * h        # graus, sentido horario a partir do topo
+# relogio analogico normal de 12 h (12 marcas, 3/6/9/12 mais fortes, sem numeros).
+# Ao vivo (o servidor gera a imagem no momento): ponteiros das horas, minutos e segundos (fino, vermelho-tijolo)
+# na hora exata de geracao, a andar a velocidade real (CSS 43200 s / 3600 s / 60 s em steps). Cada ponteiro tem a
+# hora de geracao no transform estatico e a animacao e relativa, por isso sem animacao le-se a hora certa.
+# Fallback (imagem da Action, vista com atraso): so o ponteiro das horas, adiantado FALLBACK_LEAD minutos.
+# Timelapse: so o ponteiro das horas, duas voltas por loop, em fase com a luz.
+CCX, CCY, CR = 296, 39, 20.8
+ACC = "#b04a32"          # ponteiro dos segundos: vermelho-tijolo discreto
 
 
 def _pt(cx, cy, r, ang):
@@ -1474,77 +1457,98 @@ def _arc(cx, cy, r, a0, a1):
     return f"M{x0:.2f},{y0:.2f} A{r},{r} 0 {1 if span > 180 else 0} 1 {x1:.2f},{y1:.2f}"
 
 
-def clock_angle(ldt):
-    return ang24(ldt.hour + ldt.minute / 60 + ldt.second / 3600)
+def clock_angles(ldt):
+    """(horas, minutos, segundos) em graus, sentido horario a partir do topo, mostrador de 12 h."""
+    h = (ldt.hour % 12) + ldt.minute / 60 + ldt.second / 3600
+    return h * 30, (ldt.minute + ldt.second / 60) * 6, ldt.second * 6
 
 
-def clock_hand(cx, cy, lume=False):
+def hand_hour(cx, cy, lume=False):
     if lume:
-        return (f'<path d="M{cx},{cy - 7.2} L{cx},{cy - 10.6}" stroke="#c6ffd6" stroke-width="1" stroke-linecap="round"/>'
-                f'<path d="M{cx},{cy - 7.2} L{cx},{cy - 10.6}" stroke="#7dffa6" stroke-width="2.6" stroke-linecap="round" opacity=".35" filter="url(#b0_6)"/>')
-    return (f'<path d="M{cx - 1.05},{cy + 1} L{cx - .45},{cy - 9.6} L{cx},{cy - 13} L{cx + .45},{cy - 9.6} L{cx + 1.05},{cy + 1}Z" fill="#1d181d"/>'
-            f'<path d="M{cx - .45},{cy - 9.6} L{cx},{cy - 13} L{cx + .45},{cy - 9.6}Z" fill="#d2552b"/>'
-            f'<path d="M{cx},{cy + 1} L{cx},{cy + 4.2}" stroke="#1d181d" stroke-width="1.3" stroke-linecap="round"/>'
-            f'<circle cx="{cx}" cy="{cy + 4.4}" r="1.15" fill="#1d181d"/>'
-            f'<path d="M{cx},{cy - 7.2} L{cx},{cy - 10.4}" stroke="#e9f3e6" stroke-width=".7" stroke-linecap="round" opacity=".9"/>')
+        return (f'<path d="M{cx},{cy - 4.5} L{cx},{cy - 9.2}" stroke="#c6ffd6" stroke-width=".9" stroke-linecap="round"/>'
+                f'<path d="M{cx},{cy - 4.5} L{cx},{cy - 9.2}" stroke="#7dffa6" stroke-width="2.4" stroke-linecap="round" opacity=".35" filter="url(#b0_6)"/>')
+    return (f'<path d="M{cx - 1.3},{cy + 2.6} L{cx - .9},{cy - 8.6} L{cx},{cy - 11.2} L{cx + .9},{cy - 8.6} L{cx + 1.3},{cy + 2.6}Z" fill="#1d181d"/>')
 
 
-def clock_rot(rig, ldt, ev, css, cx, cy):
-    """CSS de rotacao do ponteiro (partilhado pelo ponteiro e pelo seu lume)."""
+def hand_min(cx, cy, lume=False):
+    if lume:
+        return (f'<path d="M{cx},{cy - 7} L{cx},{cy - 14.6}" stroke="#c6ffd6" stroke-width=".7" stroke-linecap="round"/>'
+                f'<path d="M{cx},{cy - 7} L{cx},{cy - 14.6}" stroke="#7dffa6" stroke-width="2" stroke-linecap="round" opacity=".3" filter="url(#b0_6)"/>')
+    return (f'<path d="M{cx - .9},{cy + 3.2} L{cx - .6},{cy - 13.4} L{cx},{cy - 16.2} L{cx + .6},{cy - 13.4} L{cx + .9},{cy + 3.2}Z" fill="#1d181d"/>')
+
+
+def hand_sec(cx, cy):
+    return (f'<path d="M{cx},{cy + 4.6} L{cx},{cy - 16.4}" stroke="{ACC}" stroke-width=".55" stroke-linecap="round"/>'
+            f'<circle cx="{cx}" cy="{cy + 3.8}" r=".95" fill="{ACC}"/>')
+
+
+def clock_rot(rig, ldt, ev, css, cx, cy, full):
+    """CSS de rotacao dos ponteiros (partilhado pelos ponteiros e pelo seu lume)."""
+    org = f"transform-origin:{cx}px {cy}px;"
     if rig.tl:
-        A = clock_angle(ldt)       # angulo estatico (fallback sem animacao)
-        css.append(f".hh{{transform-origin:{cx}px {cy}px;animation:hh {rig.secs}s linear infinite}}"
-                   f"@keyframes hh{{from{{transform:rotate({180 - A:.2f}deg)}}to{{transform:rotate({540 - A:.2f}deg)}}}}")
-    else:
-        rev = " reverse" if "1_abril" in ev else ""
-        css.append(f".hh{{transform-origin:{cx}px {cy}px;animation:rot 86400s linear infinite{rev}}}"
-                   "@keyframes rot{to{transform:rotate(360deg)}}")
+        A = clock_angles(ldt)[0]       # angulo estatico (fallback sem animacao)
+        css.append(f".hh{{{org}animation:hh {rig.secs}s linear infinite}}"
+                   f"@keyframes hh{{from{{transform:rotate({-A:.2f}deg)}}to{{transform:rotate({720 - A:.2f}deg)}}}}")
+        return
+    rev = " reverse" if "1_abril" in ev else ""
+    css.append("@keyframes ckr{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}"
+               f".hh{{{org}animation:ckr 43200s linear infinite{rev}}}")
+    if full:
+        css.append(f".mh{{{org}animation:ckr 3600s linear infinite{rev}}}"
+                   f".sh{{{org}animation:ckr 60s steps(60) infinite{rev}}}")
 
 
-def clock_svg(rig, ldt, ev, css):
-    cx, cy, r = CCX, CCY, CR
-    o = []
-    rise, sett = day_arc(ldt)
-    o.append(f'<circle cx="{cx + 1.6}" cy="{cy + 2.4}" r="{r}" fill="#000" opacity="0.3" filter="url(#b1_2)"/>')
-    o.append(f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="#29242a"/>'
-             f'<circle cx="{cx}" cy="{cy}" r="{r - .6:.1f}" fill="none" stroke="#4a434b" stroke-width=".5"/>'
-             f'<circle cx="{cx}" cy="{cy}" r="{r - 1.8:.1f}" fill="#f1ebdf"/>'
-             f'<circle cx="{cx}" cy="{cy}" r="{r - 1.8:.1f}" fill="url(#clockface)"/>')
-    # aro dia / noite (nascer e por do sol reais)
-    ra = r - 3.6
-    o.append(f'<circle cx="{cx}" cy="{cy}" r="{ra}" fill="none" stroke="#4a5470" stroke-width="2.3"/>')
-    o.append(f'<path d="{_arc(cx, cy, ra, ang24(rise), ang24(sett))}" fill="none" stroke="#efc27c" stroke-width="2.3"/>')
-    # marcas das 24 h (0/6/12/18 maiores)
-    ticks = []
-    for hh in range(24):
-        big = hh % 6 == 0
-        x0, y0 = _pt(cx, cy, ra - (3.4 if big else 2.2), ang24(hh))
-        x1, y1 = _pt(cx, cy, ra - 1.3, ang24(hh))
-        ticks.append(f'<path d="M{x0:.2f},{y0:.2f} L{x1:.2f},{y1:.2f}" stroke-width="{1 if big else .45}"/>')
-    o.append(f'<g stroke="#2e282e" stroke-linecap="round">{"".join(ticks)}</g>')
-    # sol (meio-dia, em cima) e lua (meia-noite, em baixo)
-    o.append(f'<circle cx="{cx}" cy="{cy - 5.6}" r="1.25" fill="#d9822f"/>'
-             f'<path d="M{cx - .9},{cy + 4.4} a1.5,1.5 0 1 0 1.9,-1.6 a1.15,1.15 0 1 1 -1.9,1.6Z" fill="#4a5470"/>')
-    clock_rot(rig, ldt, ev, css, cx, cy)
-    A = clock_angle(ldt)
-    o.append(f'<g transform="rotate({A:.2f} {cx} {cy})"><g class="hh">{clock_hand(cx, cy)}</g></g>')
-    o.append(f'<circle cx="{cx}" cy="{cy}" r="1.5" fill="#1d181d"/><circle cx="{cx}" cy="{cy}" r=".55" fill="#d2552b"/>')
-    # vidro: reflexo
-    o.append(f'<path d="M{cx - 10.5},{cy - 5.5} A{r - 3.5},{r - 3.5} 0 0 1 {cx + 4},{cy - 12}" stroke="#fff" stroke-opacity=".5" stroke-width="1.2" fill="none" stroke-linecap="round"/>')
+def _hands(cx, cy, ldt, full, lume=False):
+    A, M, Sx = clock_angles(ldt)
+    o = [f'<g transform="rotate({A:.2f} {cx} {cy})"><g class="hh">{hand_hour(cx, cy, lume)}</g></g>']
+    if full:
+        o.append(f'<g transform="rotate({M:.2f} {cx} {cy})"><g class="mh">{hand_min(cx, cy, lume)}</g></g>')
+        if not lume:
+            o.append(f'<g transform="rotate({Sx:.2f} {cx} {cy})"><g class="sh">{hand_sec(cx, cy)}</g></g>')
     return "".join(o)
 
 
-def clock_night(rig, ldt):
-    """emissivos do relogio (depois das tintas): lume no ponteiro e nas marcas 0/6/12/18, e o monitor a
+def clock_svg(rig, ldt, ev, css, fb=False):
+    cx, cy, r = CCX, CCY, CR
+    full = not rig.tl and not fb
+    o = []
+    o.append(f'<circle cx="{cx + 1.8}" cy="{cy + 2.8}" r="{r}" fill="#000" opacity="0.3" filter="url(#b1_2)"/>')
+    o.append(f'<circle cx="{cx}" cy="{cy}" r="{r}" fill="#29242a"/>'
+             f'<circle cx="{cx}" cy="{cy}" r="{r - .7:.1f}" fill="none" stroke="#4a434b" stroke-width=".6"/>'
+             f'<circle cx="{cx}" cy="{cy}" r="{r - 2.2:.1f}" fill="#f1ebdf"/>'
+             f'<circle cx="{cx}" cy="{cy}" r="{r - 2.2:.1f}" fill="url(#clockface)"/>'
+             f'<circle cx="{cx + .4}" cy="{cy + .7}" r="{r - 2.9:.1f}" fill="none" stroke="#000" stroke-width="1.1" opacity=".08"/>')
+    # 12 marcas (12/3/6/9 maiores)
+    ra = r - 3.3
+    ticks = []
+    for k in range(12):
+        big = k % 3 == 0
+        x0, y0 = _pt(cx, cy, ra - (3.4 if big else 2.1), k * 30)
+        x1, y1 = _pt(cx, cy, ra, k * 30)
+        ticks.append(f'<path d="M{x0:.2f},{y0:.2f} L{x1:.2f},{y1:.2f}" stroke-width="{1.5 if big else .7}"/>')
+    o.append(f'<g stroke="#2e282e" stroke-linecap="butt">{"".join(ticks)}</g>')
+    clock_rot(rig, ldt, ev, css, cx, cy, full)
+    o.append(_hands(cx, cy, ldt, full))
+    o.append(f'<circle cx="{cx}" cy="{cy}" r="1.6" fill="#1d181d"/>')
+    if full:
+        o.append(f'<circle cx="{cx}" cy="{cy}" r=".7" fill="{ACC}"/>')
+    # vidro: reflexo
+    o.append(f'<path d="M{cx - 13.6},{cy - 6.5} A{r - 4.2},{r - 4.2} 0 0 1 {cx + 4.5},{cy - 16}" stroke="#fff" stroke-opacity=".45" stroke-width="1.4" fill="none" stroke-linecap="round"/>')
+    o.append(f'<path d="M{cx - 11},{cy - 11} A{r - 2.5},{r - 2.5} 0 0 1 {cx + 11},{cy - 11} A{r + 6},{r + 6} 0 0 0 {cx - 11},{cy - 11}Z" fill="#fff" opacity=".1"/>')
+    return "".join(o)
+
+
+def clock_night(rig, ldt, fb=False):
+    """emissivos do relogio (depois das tintas): lume nos ponteiros e nas marcas 12/3/6/9, e o monitor a
     apanhar o aro e o mostrador (sem isto, de noite, o relogio desaparece)."""
     cx, cy, r = CCX, CCY, CR
-    A = clock_angle(ldt)
-    ra = r - 3.6
-    dots = "".join(f'<circle cx="{_pt(cx, cy, ra - 2.3, ang24(h))[0]:.2f}" cy="{_pt(cx, cy, ra - 2.3, ang24(h))[1]:.2f}" r=".55" fill="#bfffd0"/>'
-                   for h in (0, 6, 12, 18))
-    face = (f'<g style="mix-blend-mode:screen"><circle cx="{cx}" cy="{cy}" r="{r - 1.8:.1f}" fill="#8da3cf" opacity=".22"/>'
-            f'<path d="{_arc(cx, cy, r - .6, 70, 190)}" stroke="#a9c2ff" stroke-width=".7" fill="none" opacity=".5" stroke-linecap="round"/></g>')
-    lume = (f'<g opacity=".9">{dots}<g transform="rotate({A:.2f} {cx} {cy})"><g class="hh">{clock_hand(cx, cy, lume=True)}</g></g></g>')
+    full = not rig.tl and not fb
+    ra = r - 3.3
+    dots = "".join(f'<circle cx="{_pt(cx, cy, ra - 1.7, k * 30)[0]:.2f}" cy="{_pt(cx, cy, ra - 1.7, k * 30)[1]:.2f}" r=".65" fill="#bfffd0"/>'
+                   for k in (0, 3, 6, 9))
+    face = (f'<g style="mix-blend-mode:screen"><circle cx="{cx}" cy="{cy}" r="{r - 2.2:.1f}" fill="#8da3cf" opacity=".22"/>'
+            f'<path d="{_arc(cx, cy, r - .7, 70, 190)}" stroke="#a9c2ff" stroke-width=".8" fill="none" opacity=".5" stroke-linecap="round"/></g>')
+    lume = f'<g opacity=".9">{dots}{_hands(cx, cy, ldt, full, lume=True)}</g>'
     return rig.g("monlit", face) + rig.g("dark", lume)
 
 
@@ -1766,11 +1770,11 @@ FALLBACK_LEAD = 10     # minutos: a imagem de fallback tem entre 0 e ~25 min qua
 
 
 def render(data, local_dt, mode="live", lead_min=FALLBACK_LEAD):
-    """mode="live": relogio exatamente na hora dada. mode="fallback": o unico ponteiro (24 h, sem minutos nem
-    segundos) avanca lead_min minutos, para compensar a idade media da imagem publicada pela Action."""
+    """mode="live": relogio exatamente na hora dada. mode="fallback": so o ponteiro das horas (12 h, sem minutos nem
+    segundos), adiantado lead_min minutos, para compensar a idade media da imagem publicada pela Action."""
     w, st = state(local_dt, data[0])
     if mode == "fallback":
-        st = dict(st, clock_dt=local_dt + timedelta(minutes=lead_min))
+        st = dict(st, clock_dt=local_dt + timedelta(minutes=lead_min), clock_fb=True)
     rig = Rig([w], 0, timelapse=False)
     return build(data, rig, st), st
 

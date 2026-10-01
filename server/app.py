@@ -125,6 +125,17 @@ class Renders:
             time.sleep(60.5 - (time.time() % 60))
 
 
+def with_seconds(svg):
+    """A imagem em cache e do inicio do minuto: adianta os ponteiros do relogio os segundos ja passados
+    (animation-delay negativo), para o relogio ficar certo ao segundo no momento do pedido."""
+    secs = lisbon_now().second + lisbon_now().microsecond / 1e6
+    i = svg.rfind(b"</svg>")
+    if i < 0 or secs < 0.5:
+        return svg
+    style = (f"<style>.ckh,.ckm,.cks,.hh,.mh,.sh{{animation-delay:-{secs:.1f}s}}</style>").encode()
+    return svg[:i] + style + svg[i:]
+
+
 # ------------------------------------------------------------------ HTTP
 class Handler(BaseHTTPRequestHandler):
     server_version = "room"
@@ -172,9 +183,9 @@ class Handler(BaseHTTPRequestHandler):
             log.exception("render falhou")
             return self._send(500, b"render error\n", "text/plain; charset=utf-8")
         extra = {"X-Room": f"{key[1]} {key[0]}", "Vary": "Accept-Encoding"}
-        body = svg
+        body = with_seconds(svg)
         if "gzip" in self.headers.get("Accept-Encoding", ""):
-            body, extra["Content-Encoding"] = svgz, "gzip"
+            body, extra["Content-Encoding"] = gzip.compress(body, 4), "gzip"
         self._send(200, body, "image/svg+xml; charset=utf-8", extra, note=("cache" if cached else "render") + f" {key[1]}")
 
 
