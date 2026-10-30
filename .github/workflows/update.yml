@@ -71,7 +71,13 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add contrib.json fallback.svg
           git commit -q -m "output $(date -u +%Y-%m-%dT%H:%MZ)"
-          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:output
+          # o GitHub as vezes rejeita o push com um erro passageiro do lado dele ("fatal error in commit_refs"):
+          # tenta ate 3 vezes antes de dar a execucao como falhada
+          for i in 1 2 3; do
+            git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:output && exit 0
+            echo "push falhou (tentativa $i), a tentar outra vez em $((i * 15)) s"; sleep $((i * 15))
+          done
+          exit 1
 
       - name: keepalive (evita que o GitHub desligue o agendamento aos 60 dias sem commits em main)
         if: always()
